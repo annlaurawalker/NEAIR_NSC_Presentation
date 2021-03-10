@@ -1,0 +1,494 @@
+# NEAIR_NSC_Presentation
+
+NEAIR Sharpen Your Skills Workhop Series
+You Have NSC Data. Now What? Workshop
+Laura Walker
+January 12, 2021, 9:30-11:00 am
+Downloading Programs
+Download R
+Download R Studio
+
+Resources
+R Studio Cheat Sheets
+R Markdown Introduction
+R Markdown Gallery
+
+Chunk #2-Opening Packages
+# This is to be run every time you use this R Markdown document
+library(dplyr)            # Data Manipulation    
+library(janitor)          # Getting totals to our tables in 5.2
+library(kableExtra)       # Formatting tables for chunk 5.2
+library(knitr)            # R Markdown files
+library(openxlsx)         # Turning data frames into a multi-sheet excel workbook
+library(tidyr)            # Data Transformation
+Chunk #3-Reading in Data
+There are multiple ways to do this. For this presentation, we’ll be getting the files from Github
+nsc_sample <- read.csv(url("https://raw.githubusercontent.com/annlaurawalker/NEAIR_NSC_Presentation/main/Source_Data/sample_data_for_presentation.txt"), sep = '\t', header = TRUE)
+
+#### Changing the column names for some uniformity
+colnames(nsc_sample) <- c( "student_id", "student_gender", "student_race", "student_search_date", "student_record_found", "attending_opeid", "attending_inst_name", "attending_inst_state", "attending_inst_years", "attending_inst_type", "enroll_start_date", "enroll_end_date", "enroll_status", "enroll_class_level", "enroll_cip_1", "enroll_cip_2", "graduated", "degree_date", "degree_name", "degree_cip_1", "degree_cip_2", "degree_cip_3", "degree_cip_4")
+
+ipeds_regions <- read.csv(url("https://raw.githubusercontent.com/annlaurawalker/NEAIR_NSC_Presentation/main/Source_Data/state_ipeds_regions.csv"), sep = ',',header = TRUE)
+
+#### Changing the column names for some uniformity
+colnames(ipeds_regions) <- c( "state", "attending_inst_region")
+
+
+# This function will help turn the blank cells in this data frame to 'NA'
+empty_as_na <- function(x){
+    if("factor" %in% class(x)) x <- as.character(x) ## since ifelse wont work with factors
+    ifelse(as.character(x)!="", x, NA)
+}
+
+## changes all blank columns to 'na' 
+nsc_sample <- nsc_sample %>% mutate_each(funs(empty_as_na))
+Chunk #4-Data Wrangling
+# Step 4.1 Removing the "-" From the OPEID field. This is a cosmetic change but may cause issues if your data have OPEIDs listed without the "-"
+    nsc_sample$attending_opeid <- gsub('-', '', nsc_sample$attending_opeid)
+
+# Step 4.2 Merging IPEDS Regions data with NSC
+    nsc_sample <- merge(x=nsc_sample, y=ipeds_regions, by.x="attending_inst_state", by.y="state", all.x = TRUE)
+
+# Step 4.2.1 Rearranging the fields so they're in a good order
+    nsc_sample <- nsc_sample %>% select(student_id, student_gender, student_race, student_search_date, student_record_found, attending_opeid, attending_inst_name, attending_inst_state, attending_inst_region, attending_inst_years, attending_inst_type, enroll_start_date, enroll_end_date, enroll_status, enroll_class_level, enroll_cip_1, enroll_cip_2, graduated, degree_date, degree_name, degree_cip_1, degree_cip_2, degree_cip_3, degree_cip_4)
+
+# removing the region data frame because we don't need it any more
+    rm(ipeds_regions)
+
+# Step 4.3 Sorting the data frame by by student_id and  enroll_start_date 
+    nsc_sample <- nsc_sample %>% arrange(student_id, enroll_start_date)
+
+# Step 4.4 Getting a data frame--count by students and how many records each student has
+    count_by_student <- nsc_sample %>% group_by(student_id) %>% summarise(total_records = n())
+
+# Lets take a look at student # 8454
+These NSC data can be divided like this:
+
+
+
+For the sake of our research question, “Where did these applicants go?”, we don’t need all the enrollment information and we do not need any of the degree information.
+# Step 4.5 Creating two data frames
+
+# Step 4.5.1 We don't need graduation information. This line extracts those lines
+    grad_removed <- subset(nsc_sample, graduated=="N" & student_record_found=="Y")
+
+# Step 4.5.2 We will need the data on students for which we do not have any information but, for now, we can keep it as its own data frame as we manipulate the remaining data
+    rec_not_found <- subset(nsc_sample, student_record_found=="N")
+
+# Step 4.6  Getting rid of not needed columns
+    grad_removed <- grad_removed %>% select(student_id, student_gender, student_race, student_search_date, student_record_found, attending_opeid, attending_inst_name, attending_inst_state, attending_inst_region, attending_inst_years, attending_inst_type, enroll_start_date, enroll_end_date, enroll_status)
+    
+    rec_not_found <- rec_not_found %>% select(student_id, student_gender, student_race, student_search_date, student_record_found, attending_opeid, attending_inst_name, attending_inst_state, attending_inst_region, attending_inst_years, attending_inst_type, enroll_start_date, enroll_end_date, enroll_status)
+
+# Step 4.7 Removing duplicates in grad_removed so we can see what happens to student 8454
+    grad_removed <- grad_removed[!duplicated(grad_removed), ]
+
+# We'll be primarily work on grad_removed now. 
+Chunk 5-Options for Picking An Institution for Each Student
+Goal: Have an unduplicated data frame: One Row: One Student
+5.1 Method One: Selecting the first institution in which the student enrolled for Fall 2020
+# Rearranging the grad_removed data frame by student_id and enroll_start_date
+grad_removed <- grad_removed %>% arrange(student_id, enroll_start_date)
+
+method_1_first_enrolled <- grad_removed  %>% group_by(student_id) %>% slice(which.min(enroll_start_date))
+5.2 Ranking Rules
+## 5.2.1 This takes a look at the type of the institution (2 or 4-year institutions), "attending_inst_years" and enrollment status, "enroll_status"
+## Some may want to put more weight on students being enrolled full-time at an institution over one where they're less than half time. 
+count_by_type_and_status <- grad_removed %>% group_by(attending_inst_years, enroll_status) %>% summarise(total=n()) %>% adorn_totals("row")
+
+## 5.2.2 Showing the breakdown of "count_by_type_and_status"
+names_spaced <- c('Institution<br/>Years', 'Enrollment <br/>Status', 'Total')
+
+kable(count_by_type_and_status, col.names = names_spaced, align = "lll", escape = FALSE) %>%   kable_styling(bootstrap_options = c("striped", "hover", "condensed"), full_width = F, position = "left") 
+Institution
+Years	Enrollment
+Status	Total
+2years	A	1
+2years	F	491
+2years	H	118
+2years	L	133
+2years	Q	142
+2years	W	22
+2years	NA	36
+4+years	A	8
+4+years	F	6984
+4+years	H	750
+4+years	L	554
+4+years	Q	323
+4+years	W	139
+4+years	NA	325
+FirstProf	F	9
+FirstProf	NA	4
+Other	F	1
+Total	
+10040
+This is an example of ranking the data
+
+
+## 5.2.3 Ranking the records involves a long if/then statement that is below: 
+grad_removed$rank <- ifelse(grad_removed$attending_inst_years=="4+years" &  grad_removed$enroll_status=="Q",  9,
+        ifelse(grad_removed$attending_inst_years=="FirstProf" &  grad_removed$enroll_status=="Q",  10,                  
+                ifelse(grad_removed$attending_inst_years=="2years" &  grad_removed$enroll_status=="Q",  11,
+                ifelse(grad_removed$attending_inst_years=="Other" &  grad_removed$enroll_status=="Q",  12,
+
+                ifelse(grad_removed$attending_inst_years=="4+years" &  grad_removed$enroll_status=="H",  13,
+                ifelse(grad_removed$attending_inst_years=="FirstProf" &  grad_removed$enroll_status=="H",  14,                     
+                ifelse(grad_removed$attending_inst_years=="2years" &  grad_removed$enroll_status=="H",  15,
+                ifelse(grad_removed$attending_inst_years=="Other" &  grad_removed$enroll_status=="H",  16,
+
+                ifelse(grad_removed$attending_inst_years=="4+years" &  grad_removed$enroll_status=="L",  17,
+                ifelse(grad_removed$attending_inst_years=="FirstProf" &  grad_removed$enroll_status=="L",  18,                     
+                ifelse(grad_removed$attending_inst_years=="2years" &  grad_removed$enroll_status=="L",  19,
+                ifelse(grad_removed$attending_inst_years=="Other" &  grad_removed$enroll_status=="L",  20,
+                
+                ifelse(grad_removed$attending_inst_years=="4+years" &  grad_removed$enroll_status=="A",  21,
+                ifelse(grad_removed$attending_inst_years=="FirstProf" &  grad_removed$enroll_status=="A",  22,                     
+                ifelse(grad_removed$attending_inst_years=="2years" &  grad_removed$enroll_status=="A",  23,
+                ifelse(grad_removed$attending_inst_years=="Other" &  grad_removed$enroll_status=="A",  24,              
+                
+                ifelse(grad_removed$attending_inst_years=="4+years" &  grad_removed$enroll_status=="W",  25,
+                ifelse(grad_removed$attending_inst_years=="FirstProf" &  grad_removed$enroll_status=="W",  26,                     
+                ifelse(grad_removed$attending_inst_years=="2years" &  grad_removed$enroll_status=="W",  27,
+                ifelse(grad_removed$attending_inst_years=="Other" &  grad_removed$enroll_status=="W",  28,                  
+
+                ifelse(grad_removed$attending_inst_years=="4+years" &  grad_removed$enroll_status=="D",  29,
+                ifelse(grad_removed$attending_inst_years=="FirstProf" &  grad_removed$enroll_status=="D",  30,                     
+                ifelse(grad_removed$attending_inst_years=="2years" &  grad_removed$enroll_status=="D",  31,
+
+                ifelse(grad_removed$attending_inst_years=="4+years" & grad_removed$enroll_status=="F", 1, 
+                ifelse(grad_removed$attending_inst_years=="4+years", 2,
+                ifelse(grad_removed$attending_inst_years=="FirstProf" &  grad_removed$enroll_status=="F",  3,   
+                ifelse(grad_removed$attending_inst_years=="FirstProf", 4,                      
+                ifelse(grad_removed$attending_inst_years=="2years" &  grad_removed$enroll_status=="F",  5, 
+                ifelse(grad_removed$attending_inst_years=="2years", 6,
+                ifelse(grad_removed$attending_inst_years=="Other" &  grad_removed$enroll_status=="F",  7, 
+                ifelse(grad_removed$attending_inst_years=="Other", 8,32)))))))))))))))))))))))))))))))
+
+method_2_ranking <- grad_removed  %>% group_by(student_id) %>% slice(which.min(rank))
+If you’re interested:
+## 98 students were listed differently between the two methods. Lets look at Student 9547
+## From now on, we'll be using the first method, "method_1_first_enrolled." 
+rm(method_2_ranking)
+5.3 Combining the dataframes together
+# We still care about the students for which we could not get NSC data
+# Merging the method_1_first_enrolled and rec_not_found together
+sankey <- rbind(method_1_first_enrolled, rec_not_found)
+
+# remove not-needed data frames
+rm(method_1_first_enrolled, rec_not_found, count_by_type_and_status)
+6.0 Creating Subgroups on the data
+6.1-Yes or No–Is the student enrolled in a USM Institution?
+sankey$attending_inst_name <- as.character(sankey$attending_inst_name)
+sankey$USM_YN[sankey$attending_opeid %in% c("00206200", "00206800", "00207200", "00209100", "00209900", "00210200", "00210400", "00210500", "00210300", "00210600", "01164400")] <- "Enrolled in USM"
+sankey$USM_YN <- as.character(sankey$USM_YN)
+sankey$USM_YN <- ifelse(is.na(sankey$USM_YN), 'Attending Non-USM_Inst.', sankey$USM_YN)
+
+sankey %>% group_by(USM_YN) %>% summarise (count = n())
+## # A tibble: 2 x 2
+##   USM_YN                  count
+##   <chr>                   <int>
+## 1 Attending Non-USM_Inst.  6120
+## 2 Enrolled in USM          3880
+6.2 Creating a very simple Step_1
+sankey$Step_1 <- "Applicants to the USM"
+6.3 Creating Step 2–Is the Student Enrolled in or Not Enrolled in a Maryland Institution?
+sankey$Step_2 <- ifelse(is.na(sankey$attending_inst_years), "Record Not Found", 
+                               ifelse(sankey$attending_inst_state=="MD", "Enrolled in MD Inst.", "Enrolled in non-MD Inst."))
+
+# Count by "Step_2" to see how the data group
+sankey %>% group_by(Step_2) %>% summarise (count = n())
+## # A tibble: 4 x 2
+##   Step_2                   count
+##   <chr>                    <int>
+## 1 Enrolled in MD Inst.      4909
+## 2 Enrolled in non-MD Inst.  4626
+## 3 Record Not Found           461
+## 4 <NA>                         4
+# There are four students enrolled in an international institution 
+sankey$Step_2 <- ifelse(is.na(sankey$Step_2), "Enrolled in non-MD Inst.", sankey$Step_2)
+                               
+sankey %>% group_by(Step_2) %>% summarise (count = n())  
+## # A tibble: 3 x 2
+##   Step_2                   count
+##   <chr>                    <int>
+## 1 Enrolled in MD Inst.      4909
+## 2 Enrolled in non-MD Inst.  4630
+## 3 Record Not Found           461
+# Lets fix the International Institution issue
+sankey$attending_inst_region <- ifelse((is.na(sankey$attending_inst_region) & (!is.na(sankey$attending_inst_name))), "International", sankey$attending_inst_region)
+
+sankey %>% group_by(attending_inst_region) %>% summarise (count = n())  
+## # A tibble: 11 x 2
+##    attending_inst_region count
+##    <chr>                 <int>
+##  1 Far West                273
+##  2 Great Lakes             593
+##  3 International             4
+##  4 Mid East               6743
+##  5 New England             367
+##  6 Outlying Areas            2
+##  7 Plains                  112
+##  8 Rocky Mountains          78
+##  9 Southeast              1213
+## 10 Southwest               154
+## 11 <NA>                    461
+6.4 Creating Step 3–Where in MD is the student enrolled? If not Maryland, institution region.
+sankey$Step_3 <- ifelse(sankey$Step_2=="Record Not Found", "",
+                               ifelse(sankey$attending_inst_state=="MD" & sankey$USM_YN=="Enrolled in USM", "Enrolled in USM", 
+                                      ifelse(sankey$attending_inst_state=="MD" & sankey$attending_inst_years=="2years", "MDCC", 
+                                             ifelse(sankey$attending_inst_state=="MD" & sankey$attending_inst_years=="4+years" & sankey$attending_inst_type=="Private, Nonprofit" , "MD, Private",
+                                                    ifelse(sankey$attending_inst_state=="MD" & sankey$attending_inst_years=="4+years" & sankey$attending_inst_type=="Public", "MD, Non-USM, Public",
+                                                           ifelse(sankey$Step_2=="Enrolled in non-MD Inst.", sankey$attending_inst_region, ""))))))
+
+# Why ""? We Dont want "record Not Found" to be extended into proceeding groups. 
+sankey %>% group_by(Step_3) %>% summarise (count = n())   
+## # A tibble: 15 x 2
+##    Step_3                count
+##    <chr>                 <int>
+##  1 ""                      461
+##  2 "Enrolled in USM"      3880
+##  3 "Far West"              273
+##  4 "Great Lakes"           593
+##  5 "International"           4
+##  6 "MD, Non-USM, Public"   104
+##  7 "MD, Private"           269
+##  8 "MDCC"                  656
+##  9 "Mid East"             1834
+## 10 "New England"           367
+## 11 "Outlying Areas"          2
+## 12 "Plains"                112
+## 13 "Rocky Mountains"        78
+## 14 "Southeast"            1213
+## 15 "Southwest"             154
+6.5 Creating Group 4–The actual institution
+## For the sake of the Tableau template, we need to use Step 1, Step 2, Step 3. It will just make things a bit easier once we get into Tableau
+sankey$Step_4 <- sankey$attending_inst_name
+7.0 Creating the Sankey
+7.1 Tableau
+Blog Link
+Template Files
+
+# The Flerlage Twins Blog
+
+# I had to use an older version of Tableau 2020.1. There may be issues with this template with newer versions of Tableau
+
+## We want to rank the data so that it is in an intuitive order in the sankey diagram itself, similar to the USM example I previously showed you
+    sankey$Rank <- ifelse(sankey$Step_2=="Record Not Found", 35, 
+                      ifelse(is.na(sankey$Step_3), 35,
+                             ifelse(sankey$Step_3=="Enrolled in USM", 11,
+                                    ifelse(sankey$Step_3=="MDCC", 12,
+                                           ifelse(sankey$Step_3=="MD, Private", 13,
+                                                  ifelse(sankey$Step_3=="MD, Non-USM, Public", 14,
+                                                                ifelse(sankey$Step_3=="Mid East", 26, 
+                                                                       ifelse(sankey$Step_3=="Southeast", 27, 
+                                                                              ifelse(sankey$Step_3=="Great Lakes", 28, 
+                                                                                     ifelse(sankey$Step_3=="New England", 29, 
+                                                                                            ifelse(sankey$Step_3=="Far West", 30, 
+                                                                                                   ifelse(sankey$Step_3=="Southwest", 31, 
+                                                                                                          ifelse(sankey$Step_3=="Plains", 32,
+                                                                                                                 ifelse(sankey$Step_3=="Rocky Mountains", 33, 34))))))))))))))
+# Creating the data for this template is actually quite easy, using the dplyr package. 
+    Data <- sankey %>% group_by(student_gender, student_race, Step_1, Step_2, Step_3, Rank, Step_4) %>% summarise (Size = n())
+
+# Just in case there are any NAs listed, this will change them to blank
+    Data[is.na(Data)] <- ""
+
+# The template needs Both "Data" & "Model" in order to work. 
+    Model <- data.frame(Path=c(1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50),     Line=c('Top', 'Top', 'Top', 'Top', 'Top', 'Top', 'Top', 'Top', 'Top', 'Top', 'Top', 'Top', 'Top', 'Top', 'Top', 'Top', 'Top', 'Top', 'Top', 'Top', 'Top', 'Top', 'Top', 'Top', 'Top', 'Top', 'Top', 'Top', 'Top', 'Top', 'Top', 'Top', 'Top', 'Top', 'Top', 'Top', 'Top', 'Top', 'Top', 'Top', 'Top', 'Top', 'Top', 'Top', 'Top', 'Top', 'Top', 'Top', 'Top', 'Top', 'Bottom', 'Bottom', 'Bottom', 'Bottom', 'Bottom', 'Bottom', 'Bottom', 'Bottom', 'Bottom', 'Bottom', 'Bottom', 'Bottom', 'Bottom', 'Bottom', 'Bottom', 'Bottom', 'Bottom', 'Bottom', 'Bottom', 'Bottom', 'Bottom', 'Bottom', 'Bottom', 'Bottom', 'Bottom', 'Bottom', 'Bottom', 'Bottom', 'Bottom', 'Bottom', 'Bottom', 'Bottom', 'Bottom', 'Bottom', 'Bottom', 'Bottom', 'Bottom', 'Bottom', 'Bottom', 'Bottom', 'Bottom', 'Bottom', 'Bottom', 'Bottom', 'Bottom', 'Bottom', 'Bottom', 'Bottom', 'Bottom', 'Bottom'))
+    
+    list_of_datasets <- list("Data" = Data, "Model" = Model)
+    write.xlsx(list_of_datasets, file = "neair.xlsx")
+    
+    ## Load the data into the template, per usual
+    ## In each worksheet--Be sure to sort the data by the "Rank" field
+## Simply removing data frames we don't need any more. 
+
+rm(list_of_datasets, Data, Model)
+7.2 SankeyMatic
+SankeyMatic Build Site
+
+## Run this chunk if you really do want ever single institution listed. 
+## For SankeyMatic, the source data have to be long, whereas Tableau needed the data wide
+## We're going to create summary tables using steps 1-4
+## Table 1 will be steps 1 & 2
+## Table 2 will be steps 2 & 3
+## Table 3 will be steps 3 & 4
+## Then we'll combine these tables
+
+# summarizing by Step_1 & Step_2
+table1 <- sankey %>% group_by(Step_1, Step_2) %>% summarise(record_count=n())
+# changing column names so they're consistent across all three tables
+colnames(table1) <- c("First_Area", "Second_Area", "record_count")
+
+# summarizing by Step_2 & Step_3
+table2 <- sankey %>% group_by(Step_2, Step_3) %>% summarise(record_count=n())
+# changing column names so they're consistent across all three tables
+colnames(table2) <- c("First_Area", "Second_Area", "record_count")
+
+# summarizing by Step_3 & Step_4
+table3 <- sankey %>% group_by(Step_3, Step_4) %>% summarise(record_count=n())
+# changing column names so they're consistent across all three tables
+colnames(table3) <- c("First_Area", "Second_Area", "record_count")
+
+sankeymatic <- rbind(table1, table2, table3)
+
+
+## You'll notice that record not found is mentioned a few times, when we really only want this listed once. 
+## changes all blank columns to 'na' 
+sankeymatic <- sankeymatic %>% mutate_each(funs(empty_as_na))
+
+## this will only include rows where all three fields are filled in OR take out the additional "Record Not Found" records
+sankeymatic <- sankeymatic[complete.cases(sankeymatic), ] 
+7.2 SankeyMatic–With “Other” regions listed
+## What might make this challenging is the "other" groups if the subgroup isn't in the top three--If you're interested in doing this programatically, go to section 7.3
+
+# 7.2.1--Creating the same tables from 7.1
+    table1 <- sankey %>% group_by(Step_1, Step_2) %>% summarise(record_count=n())
+    # changing column names so they're consistent across all three tables
+    colnames(table1) <- c("First_Area", "Second_Area", "record_count")
+
+# summarizing by Step_2 & Step_3
+    table2 <- sankey %>% group_by(Step_2, Step_3) %>% summarise(record_count=n())
+    # changing column names so they're consistent across all three tables
+    colnames(table2) <- c("First_Area", "Second_Area", "record_count")
+# 7.2.1--Lets see where our biggest regions are from? 
+    biggest_regions <- sankey %>% group_by(Step_3) %>% summarise(record_count=n()) %>% mutate(rank = rank(-record_count)) %>% arrange(rank)
+    biggest_regions
+## # A tibble: 15 x 3
+##    Step_3                record_count  rank
+##    <chr>                        <int> <dbl>
+##  1 "Enrolled in USM"             3880     1
+##  2 "Mid East"                    1834     2
+##  3 "Southeast"                   1213     3
+##  4 "MDCC"                         656     4
+##  5 "Great Lakes"                  593     5
+##  6 ""                             461     6
+##  7 "New England"                  367     7
+##  8 "Far West"                     273     8
+##  9 "MD, Private"                  269     9
+## 10 "Southwest"                    154    10
+## 11 "Plains"                       112    11
+## 12 "MD, Non-USM, Public"          104    12
+## 13 "Rocky Mountains"               78    13
+## 14 "International"                  4    14
+## 15 "Outlying Areas"                 2    15
+# We can see that the four biggest regions that aren't in Maryland are:
+## Mid East
+## Southeast
+## Great Lakes
+## New England
+
+# summarizing by Step_3 & Step_4
+    table3 <- sankey %>% group_by(Step_3, Step_4) %>% summarise(record_count=n()) %>% mutate(rank = rank(-record_count)) %>% arrange(Step_3, rank)
+
+## 7.2.2--Let's place those not in the Top Four under "Other Regions"
+    table3$Step_3[table3$Step_3=="Far West"] <- "Other Regions"
+    table3$Step_3[table3$Step_3=="Southwest"] <- "Other Regions"
+    table3$Step_3[table3$Step_3=="Plains"] <- "Other Regions"
+    table3$Step_3[table3$Step_3=="Rocky Mountains"] <- "Other Regions"
+    table3$Step_3[table3$Step_3=="International"] <- "Other Regions"
+    table3$Step_3[table3$Step_3=="Outlying Areas"] <- "Other Regions"
+
+# 7.2.3--We have to rerun this so the regions listed above aren't seen any more
+    table3 <- table3 %>% group_by(Step_3, Step_4) %>% summarise(record_count=sum(record_count)) %>% mutate(rank = rank(-record_count)) %>% arrange(Step_3, rank)
+
+# 7.2.4--We also have to edit table2 as well!
+    table2$Second_Area[table2$Second_Area=="Far West"] <- "Other Regions"
+    table2$Second_Area[table2$Second_Area=="Southwest"] <- "Other Regions"
+    table2$Second_Area[table2$Second_Area=="Plains"] <- "Other Regions"
+    table2$Second_Area[table2$Second_Area=="Rocky Mountains"] <- "Other Regions"
+    table2$Second_Area[table2$Second_Area=="International"] <- "Other Regions"
+    table2$Second_Area[table2$Second_Area=="Outlying Areas"] <- "Other Regions"
+
+# 7.2.5--We have to rerun this so the regions listed above aren't seen any more
+    table2 <- table2 %>% group_by(First_Area, Second_Area) %>% summarise(record_count=sum(record_count))
+# 7.2.6--Grouping the data by Rank
+# If the institution is in Maryland, we'll list the top three institituions in that group
+# If the region was one of the four biggest regions, we'll include the top few institutions in the region and place the other institutions as "Other, Region"
+## For the first two biggest regions, Southeast & Mid East, we'll list the top four instititutions
+## For the remaining regions (not placed in "Other Regions"), Great Lakes & New England, we'll list the top two instititutions
+    table3$group <- ifelse(table3$Step_3=="Enrolled in USM" & table3$rank <= 3, "Keep", 
+                       ifelse(table3$Step_3=="MDCC" & table3$rank <= 3, "Keep", 
+                              ifelse(table3$Step_3=="MD, Private" & table3$rank <= 3, "Keep", 
+                                     ifelse(table3$Step_3=="MD, Non-USM, Public" & table3$rank <= 3, "Keep", 
+                                            
+                                            ifelse(table3$Step_3=="Southeast" & table3$rank <= 4, "Keep",
+                                            ifelse(table3$Step_3=="Mid East" & table3$rank <= 4, "Keep",
+                                                          
+                                                  ifelse(table3$Step_3=="Great Lakes" & table3$rank <= 2, "Keep",
+                                                  ifelse(table3$Step_3=="New England" & table3$rank <= 2, "Keep", "Other"))))))))
+
+# 7.2.7--This will revise step 4 to revise it to say "Other, Great Lakes" For Example
+    table3$group_2 <- ifelse(table3$group=="Keep", table3$Step_4, paste("Other", as.character(table3$Step_3), sep=", "))
+
+# The head function allows you to see the first ten rows of the new data frame
+    head(table3, 10)
+## # A tibble: 10 x 6
+## # Groups:   Step_3 [2]
+##    Step_3      Step_4               record_count  rank group group_2            
+##    <chr>       <chr>                       <int> <dbl> <chr> <chr>              
+##  1 ""          <NA>                          461     1 Other "Other, "          
+##  2 "Enrolled ~ University of Maryl~         1085     1 Keep  "University of Mar~
+##  3 "Enrolled ~ University of Maryl~         1005     2 Keep  "University of Mar~
+##  4 "Enrolled ~ Towson University             533     3 Keep  "Towson University"
+##  5 "Enrolled ~ University of Maryl~          346     4 Other "Other, Enrolled i~
+##  6 "Enrolled ~ Bowie State Univers~          202     5 Other "Other, Enrolled i~
+##  7 "Enrolled ~ University of Maryl~          195     6 Other "Other, Enrolled i~
+##  8 "Enrolled ~ Salisbury University          190     7 Other "Other, Enrolled i~
+##  9 "Enrolled ~ Frostburg State Uni~          143     8 Other "Other, Enrolled i~
+## 10 "Enrolled ~ University of Balti~          118     9 Other "Other, Enrolled i~
+# 7.2.8--Rerunning the table3 line with the revised group_2 instead. We went from 802 records to 33!
+    table3 <- table3 %>% group_by(Step_3, group_2) %>% summarise(record_count=sum(record_count)) 
+
+## 7.2.7--You'll notice that record not found is mentioned a few times, when we really only want this listed once. 
+## for whatever reason empty_as_na didn't work on this data frame
+## the first row had the record not found data so the line below extracts line one. 
+    table3 <- table3[c(2:33), ]  
+
+
+# 7.2.9 Renaming fields
+    colnames(table3) <- c("First_Area", "Second_Area", "record_count")
+
+# 7.2.10 We want the Rows that start with "Other __region__" to be at the bottom of its respective group. The line below marks those that start with Other as "True" and the rest as "False"
+    table3$other <- startsWith(table3$Second_Area, 'Other') 
+
+
+## 7.2.11--sorting the data frame so the "others" are placed at the bottom of the group
+    table3 <- table3 %>% arrange(First_Area, other, (desc(record_count)))
+
+## 7.2.12--Including only the fields we need so they're consistent with table1 and table2
+    table3 <- table3 %>% select(First_Area, Second_Area, record_count)
+## 7.2.13--Combining all tables
+    sankeymatic_v2 <- rbind(table1, table2, table3)
+
+# 7.2.14--Above helped with some of the records in "Second_Area" Ordering this data frame by First_area is below:
+    sankeymatic_v2$grouporder <- ifelse(sankeymatic_v2$First_Area=="Applicants to USM", 1, 
+                                 ifelse(sankeymatic_v2$First_Area=="Enrolled in MD Inst.", 2, 
+                                        ifelse(sankeymatic_v2$First_Area=="Enrolled in USM", 3, 
+                                               ifelse(sankeymatic_v2$First_Area=="MDCC", 4, 
+                                                      ifelse(sankeymatic_v2$First_Area=="MD, Private", 5, 
+                                                             ifelse(sankeymatic_v2$First_Area=="MD, Non-USM, Public", 6, 
+                                                                    ifelse(sankeymatic_v2$First_Area=="Enrolled in non-MD Inst.", 7, 
+                                                                           ifelse(sankeymatic_v2$First_Area=="Mid East", 8, 
+                                                                                  ifelse(sankeymatic_v2$First_Area=="Southeast", 9,
+                                                                                                ifelse(sankeymatic_v2$First_Area=="Great Lakes", 10,
+                                                                                                       ifelse(sankeymatic_v2$First_Area=="New England", 10,11)))))))))))
+
+## Resorting & Selecting only the fields we need
+    sankeymatic_v2 <- sankeymatic_v2 %>% arrange(grouporder, First_Area) %>% select(First_Area, Second_Area, record_count)
+## 7.2.15--FINALLY THE LAST STEP!! 
+
+## The data need to be arranged like Step_1 [count] Step_2
+## So we concatenate
+    sankeymatic_v2$key_for_site <- paste(sankeymatic_v2$First_Area," [",sankeymatic_v2$record_count,"] ",sankeymatic_v2$Second_Area, sep = "")
+
+## Upon additional inspection, I noticed that the last two lines of this data frame extend flows that should be stopped. Namely "Record Not Found," that only extends out to one flow and "Other Regions," that should stop after the second flow 
+    sankeymatic_v2 <- sankeymatic_v2[c(1:43), ]  
+
+
+## Writes a csv 
+write.csv(sankeymatic_v2, file = "sankeymatic_v2.3.csv",row.names=FALSE)
+
+## Before you paste your info in the inputs window, be sure to change the "diagram width" to 1200 and the "height" to 1800. If you don't do this the image will look incredibly tight and not helpful. 
+
+## All you'll need is to copy the "key_for_site" field and place it in the [site](http://sankeymatic.com/build/)
